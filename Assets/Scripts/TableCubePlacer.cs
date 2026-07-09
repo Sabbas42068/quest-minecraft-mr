@@ -56,7 +56,7 @@ public class TableCubePlacer : MonoBehaviour
         // with 'up' pointing away from the surface. Spawn the cube slightly
         // above it so it rests on top rather than intersecting.
         Vector3 surfaceCentre = tableAnchor.transform.position;
-        Vector3 spawnPos = surfaceCentre + tableAnchor.transform.up * (cubeSize * 0.5f);
+        Vector3 spawnPos = surfaceCentre + tableAnchor.transform.up * 0.01f * (cubeSize * 0.5f);
 
         GameObject cube = GameObject.CreatePrimitive(PrimitiveType.Cube);
         cube.name = "TableBlock";
