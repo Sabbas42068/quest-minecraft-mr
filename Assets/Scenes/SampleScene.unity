@@ -800,15 +800,17 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 73f7a0c2271bc054f955e48b5fbdc8da, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  serverIP: 127.0.0.1
-  serverPort: 9001
-  originX: 100
-  originY: 64
-  originZ: 200
+  serverIP: 192.168.0.112
+  serverPort: 8000
+  originX: -2
+  originY: 45
+  originZ: -3
   sizeX: 32
   sizeY: 24
   sizeZ: 32
   blockSize: 0.015
+  pollInterval: 0.3
+  livePolling: 1
 --- !u!23 &845719447
 MeshRenderer:
   m_ObjectHideFlags: 0

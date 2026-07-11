@@ -5,17 +5,18 @@ using System.Collections.Generic;
 using Meta.XR.MRUtilityKit;
 
 /// <summary>
-/// Fetches a region of REAL Minecraft world data from the GDMC-HTTP mod and
-/// renders it as ONE mesh with submeshes, one solid URP/Lit material per block
-/// type. No custom shader (avoids VR shader-compile issues) — URP/Lit renders
-/// correctly in stereo.
+/// LIVE view of a real Minecraft world on the table.
+/// Polls the GDMC-HTTP mod over Wi-Fi on a timer, and rebuilds the mesh only
+/// when the world data actually changed — so breaking/placing a block in
+/// Minecraft on the PC shows up on the table a moment later, without needless
+/// mesh rebuilds when nothing has happened.
 /// </summary>
 [RequireComponent(typeof(MeshFilter), typeof(MeshRenderer))]
 public class MinecraftWorldView : MonoBehaviour
 {
-    [Header("Minecraft server (USB tunnel = 127.0.0.1, port 9001)")]
-    public string serverIP = "127.0.0.1";
-    public int serverPort = 9001;
+    [Header("Minecraft server (Wi-Fi: PC's IP + GDMC port)")]
+    public string serverIP = "192.168.0.112";
+    public int serverPort = 8000;
 
     [Header("Region to fetch (Minecraft world coords)")]
     public int originX = 100;
@@ -29,21 +30,32 @@ public class MinecraftWorldView : MonoBehaviour
     [Tooltip("Size of each voxel on the table, in metres. 0.015 = 1.5cm.")]
     public float blockSize = 0.015f;
 
+    [Header("Live updates")]
+    [Tooltip("Seconds between polls. Lower = more responsive, more network traffic.")]
+    public float pollInterval = 1.5f;
+    [Tooltip("Turn off to load once and stay static.")]
+    public bool livePolling = true;
+
     private Dictionary<Vector3Int, string> world = new Dictionary<Vector3Int, string>();
+
+    // Hash of the last response, so we skip rebuilding when nothing changed.
+    private int lastDataHash = 0;
 
     private Vector3 tableOrigin = Vector3.zero;
     private Quaternion tableYaw = Quaternion.identity;
 
-    // Shared vertex list; triangles are grouped per block type (submesh).
     private List<Vector3> verts = new List<Vector3>();
     private Dictionary<string, List<int>> trisByType = new Dictionary<string, List<int>>();
+
+    // Materials are cached per block type so we don't recreate them every poll.
+    private Dictionary<string, Material> materialCache = new Dictionary<string, Material>();
 
     void Start()
     {
         if (MRUK.Instance != null)
             MRUK.Instance.RegisterSceneLoadedCallback(OnSceneReady);
         else
-            StartCoroutine(FetchAndBuild());
+            StartCoroutine(PollLoop());
     }
 
     void OnSceneReady()
@@ -64,34 +76,56 @@ public class MinecraftWorldView : MonoBehaviour
                 }
             }
         }
-        StartCoroutine(FetchAndBuild());
+        // Place the object once; the mesh gets swapped in on each rebuild.
+        transform.position = tableOrigin;
+        transform.rotation = tableYaw;
+
+        StartCoroutine(PollLoop());
     }
 
-    IEnumerator FetchAndBuild()
+    /// Repeatedly fetch the region. Rebuilds only when the data changed.
+    IEnumerator PollLoop()
+    {
+        while (true)
+        {
+            yield return StartCoroutine(FetchOnce());
+
+            if (!livePolling) yield break;          // one-shot mode
+            yield return new WaitForSeconds(pollInterval);
+        }
+    }
+
+    IEnumerator FetchOnce()
     {
         string url = "http://" + serverIP + ":" + serverPort + "/blocks"
                    + "?x=" + originX + "&y=" + originY + "&z=" + originZ
                    + "&dx=" + sizeX + "&dy=" + sizeY + "&dz=" + sizeZ;
 
-        Debug.Log("MinecraftWorldView: requesting " + url);
-
         using (UnityWebRequest req = UnityWebRequest.Get(url))
         {
             req.SetRequestHeader("Accept", "application/json");
-            req.timeout = 20;
+            req.timeout = 15;
             yield return req.SendWebRequest();
 
             if (req.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogError("MinecraftWorldView: request FAILED - " + req.result + " : " + req.error);
-                yield break;
+                Debug.LogWarning("MinecraftWorldView: poll failed - " + req.error
+                               + " (will retry)");
+                yield break;   // keep the old mesh, try again next poll
             }
 
             string json = req.downloadHandler.text;
-            Debug.Log("MinecraftWorldView: received " + json.Length + " chars.");
+
+            // Cheap change-detection: if the payload is identical, skip the
+            // expensive parse + mesh rebuild entirely.
+            int hash = json.GetHashCode();
+            if (hash == lastDataHash)
+                yield break;   // nothing changed in the world
+            lastDataHash = hash;
+
             ParseBlocks(json);
-            Debug.Log("MinecraftWorldView: parsed " + world.Count + " solid blocks.");
             BuildMesh();
+            Debug.Log("MinecraftWorldView: world updated (" + world.Count + " blocks).");
         }
     }
 
@@ -138,7 +172,6 @@ public class MinecraftWorldView : MonoBehaviour
             if (IsAir(p.x, p.y, p.z - 1)) AddFace(lp, Vector3.back, type);
         }
 
-        // Build the mesh: one submesh per block type, in a stable order.
         List<string> types = new List<string>(trisByType.Keys);
 
         Mesh mesh = new Mesh();
@@ -150,24 +183,24 @@ public class MinecraftWorldView : MonoBehaviour
         mesh.RecalculateNormals();
         GetComponent<MeshFilter>().mesh = mesh;
 
-        // One solid URP/Lit material per submesh, matching block type order.
-        Shader urpLit = Shader.Find("Universal Render Pipeline/Lit");
+        // Reuse cached materials so we're not allocating new ones every poll.
         Material[] mats = new Material[types.Count];
         for (int i = 0; i < types.Count; i++)
-        {
-            Material m = new Material(urpLit);
-            m.color = ColorFor(types[i]);
-            // Make it matte, not shiny.
-            if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0f);
-            mats[i] = m;
-        }
+            mats[i] = GetMaterial(types[i]);
         GetComponent<MeshRenderer>().materials = mats;
+    }
 
-        transform.position = tableOrigin;
-        transform.rotation = tableYaw;
+    Material GetMaterial(string type)
+    {
+        if (materialCache.TryGetValue(type, out Material cached))
+            return cached;
 
-        Debug.Log("MinecraftWorldView: mesh built - " + verts.Count + " verts, "
-                  + types.Count + " block types.");
+        Shader urpLit = Shader.Find("Universal Render Pipeline/Lit");
+        Material m = new Material(urpLit);
+        m.color = ColorFor(type);
+        if (m.HasProperty("_Smoothness")) m.SetFloat("_Smoothness", 0f);
+        materialCache[type] = m;
+        return m;
     }
 
     Color ColorFor(string id)
@@ -179,6 +212,7 @@ public class MinecraftWorldView : MonoBehaviour
             case "minecraft:stone":       return new Color(0.50f, 0.50f, 0.52f);
             case "minecraft:gravel":      return new Color(0.42f, 0.40f, 0.40f);
             case "minecraft:coal_ore":    return new Color(0.25f, 0.25f, 0.27f);
+            case "minecraft:iron_ore":    return new Color(0.70f, 0.60f, 0.50f);
             case "minecraft:sand":        return new Color(0.85f, 0.80f, 0.60f);
             case "minecraft:water":       return new Color(0.25f, 0.40f, 0.85f);
             case "minecraft:oak_log":     return new Color(0.40f, 0.30f, 0.18f);
