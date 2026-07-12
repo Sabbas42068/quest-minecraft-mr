@@ -774,6 +774,7 @@ GameObject:
   m_Component:
   - component: {fileID: 845719447}
   - component: {fileID: 845719446}
+  - component: {fileID: 845719448}
   m_Layer: 0
   m_Name: WorldMap
   m_TagString: Untagged
@@ -803,9 +804,9 @@ MonoBehaviour:
   worldCentre: {x: 19, y: 63, z: 17}
   renderRadius: 2
   verticalChunks: 2
-  chunkSize: 32
+  chunkSize: 12
   blockSize: 0.015
-  pollInterval: 1.5
+  pollInterval: 3
   livePolling: 1
   anchorToTable: 1
 --- !u!4 &845719447
@@ -823,6 +824,25 @@ Transform:
   m_Children: []
   m_Father: {fileID: 0}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &845719448
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 845719444}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2c3971e6bacebe8418537c6d4bebd796, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  pollInterval: 0.1
+  markerHeightBlocks: 2
+  markerWidthBlocks: 0.8
+  markerColor: {r: 1, g: 0.85, b: 0.1, a: 1}
+  yawOffset: 0
+  smoothMovement: 1
+  smoothSpeed: 8
 --- !u!1 &938769111
 GameObject:
   m_ObjectHideFlags: 0

@@ -50,6 +50,22 @@ public class WorldMapManager : MonoBehaviour
 
     private MaterialLibrary materials;
 
+    // Cached so other layers (players, entities) can convert coordinates the
+    // exact same way the chunks do — guaranteeing they line up on the map.
+    private Vector3Int gridOriginCached;
+    private Vector3 centringOffsetCached;
+
+    /// <summary>
+    /// Convert a Minecraft world position into a LOCAL position on this map.
+    /// Any layer that wants to sit correctly on the terrain (player markers,
+    /// mobs, waypoints) should use this rather than doing its own maths.
+    /// </summary>
+    public Vector3 WorldToMapLocal(Vector3 minecraftPos)
+    {
+        Vector3 rel = minecraftPos - (Vector3)gridOriginCached;
+        return rel * blockSize + centringOffsetCached;
+    }
+
     void Start()
     {
         materials = new MaterialLibrary();
@@ -97,6 +113,11 @@ public class WorldMapManager : MonoBehaviour
         // Centre the whole map on the anchor point.
         float span = (renderRadius * 2 + 1) * chunkSize * blockSize;
         Vector3 centringOffset = new Vector3(-span * 0.5f, 0f, -span * 0.5f);
+
+        // Cache these so PlayerLayer (and any future entity layer) can convert
+        // Minecraft coords -> map coords identically to the chunks.
+        gridOriginCached = gridOrigin;
+        centringOffsetCached = centringOffset;
 
         for (int cx = -renderRadius; cx <= renderRadius; cx++)
         for (int cz = -renderRadius; cz <= renderRadius; cz++)
