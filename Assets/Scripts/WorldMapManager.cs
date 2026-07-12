@@ -56,6 +56,26 @@ public class WorldMapManager : MonoBehaviour
     private Vector3 centringOffsetCached;
 
     /// <summary>
+    /// The Minecraft coordinate of the far CORNER of the visible map region.
+    /// Entity layers use this to scope their queries to only what the map shows.
+    /// (Not to be confused with the grid origin used by WorldToMapLocal, which
+    /// is the centre chunk's origin.)
+    /// </summary>
+    public Vector3Int RegionCorner
+    {
+        get
+        {
+            return new Vector3Int(
+                Mathf.FloorToInt(worldCentre.x / (float)chunkSize) * chunkSize
+                    - renderRadius * chunkSize,
+                Mathf.FloorToInt(worldCentre.y / (float)chunkSize) * chunkSize,
+                Mathf.FloorToInt(worldCentre.z / (float)chunkSize) * chunkSize
+                    - renderRadius * chunkSize
+            );
+        }
+    }
+
+    /// <summary>
     /// Convert a Minecraft world position into a LOCAL position on this map.
     /// Any layer that wants to sit correctly on the terrain (player markers,
     /// mobs, waypoints) should use this rather than doing its own maths.
