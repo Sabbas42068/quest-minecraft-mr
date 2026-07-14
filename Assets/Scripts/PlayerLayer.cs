@@ -111,7 +111,15 @@ public class PlayerLayer : MonoBehaviour
             seen.Add(p.uuid);
             GameObject marker = GetOrCreateMarker(p.uuid, p.name);
 
-            Vector3 pos = map.WorldToMapLocal(new Vector3(wx, wy, wz))
+            Vector3 mcPos = new Vector3(wx, wy, wz);
+
+            // Tell the chunk system where the player is, so chunks near them
+            // poll faster and distant chunks poll slowly. (If several players
+            // are online, the last one wins — fine for now; could be extended
+            // to a multi-focus system later.)
+            UpdatePriority.SetFocus(mcPos);
+
+            Vector3 pos = map.WorldToMapLocal(mcPos)
                         + Vector3.up * (markerHeightBlocks * 0.5f * map.blockSize);
 
             Quaternion rot = marker.transform.localRotation;

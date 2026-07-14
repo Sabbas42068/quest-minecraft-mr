@@ -48,12 +48,59 @@ public class WorldChunk : MonoBehaviour
         // Stagger the first request so chunks don't all hit the server at once.
         yield return new WaitForSeconds(startDelay);
 
-        while (true)
+        // FIRST PASS: every chunk fetches once immediately, so the whole world
+        // appears complete. Prioritisation only kicks in after this.
+        yield return StartCoroutine(FetchOnce());
+
+        while (livePolling)
         {
+            float dist = ChunkDistanceFromPlayer();
+            float multiplier = UpdatePriority.IntervalMultiplier(dist);
+
+            // Chunks near the player poll at the base rate; distant ones poll
+            // proportionally less often. Small random jitter spreads requests
+            // out so they don't all fire on the same frame.
+            float wait = pollInterval * multiplier * Random.Range(0.85f, 1.15f);
+
+            // Wait in short slices rather than one long sleep, re-checking the
+            // player's distance as we go. Without this, a far-away chunk on a
+            // 16x wait wouldn't notice the player walking toward it until that
+            // whole wait expired — so approaching a distant area would be slow
+            // to refresh. This lets a chunk "wake up" as soon as it becomes
+            // high-priority.
+            float waited = 0f;
+            while (waited < wait)
+            {
+                yield return new WaitForSeconds(0.25f);
+                waited += 0.25f;
+
+                // Player got closer? Shorten the wait accordingly.
+                float newMultiplier = UpdatePriority.IntervalMultiplier(ChunkDistanceFromPlayer());
+                if (newMultiplier < multiplier)
+                {
+                    multiplier = newMultiplier;
+                    wait = pollInterval * multiplier;
+                }
+            }
+
             yield return StartCoroutine(FetchOnce());
-            if (!livePolling) yield break;
-            yield return new WaitForSeconds(pollInterval);
         }
+    }
+
+    /// Distance from this chunk's centre to the player, measured in chunks.
+    float ChunkDistanceFromPlayer()
+    {
+        if (!UpdatePriority.hasFocus) return 99f;
+
+        // Centre of this chunk in Minecraft coords.
+        Vector3 chunkCentre = (Vector3)mcOrigin + Vector3.one * (chunkSize * 0.5f);
+
+        // Horizontal distance only — vertical rings aren't meaningful for a map
+        // (a chunk directly below the player is just as relevant as their own).
+        Vector3 d = UpdatePriority.playerWorldPos - chunkCentre;
+        d.y = 0f;
+
+        return d.magnitude / chunkSize;
     }
 
     IEnumerator FetchOnce()

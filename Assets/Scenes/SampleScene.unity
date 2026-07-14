@@ -803,11 +803,11 @@ MonoBehaviour:
   serverIP: 192.168.0.112
   serverPort: 8000
   worldCentre: {x: 19, y: 63, z: 17}
-  renderRadius: 2
+  renderRadius: 8
   verticalChunks: 2
   chunkSize: 12
   blockSize: 0.015
-  pollInterval: 3
+  pollInterval: 0.5
   livePolling: 1
   anchorToTable: 1
 --- !u!4 &845719447
@@ -860,7 +860,7 @@ MonoBehaviour:
   pollInterval: 0.3
   ignoreClutter: 1
   smoothMovement: 1
-  correctionSpeed: 12
+  correctionSpeed: 11
   rotationSpeed: 8
 --- !u!1 &938769111
 GameObject:
@@ -1684,7 +1684,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 1964602097}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 177795c54d1bf9c4f919adf0cb61ca93, type: 3}
   m_Name: 
