@@ -23,21 +23,23 @@ public class EntityLayer : MonoBehaviour
 {
     [Header("Polling")]
     [Tooltip("Seconds between entity polls.")]
-    public float pollInterval = 0.4f;
+    public float pollInterval = 0.2f;
 
     [Tooltip("Skip item drops, arrows, XP orbs etc. Keeps the map readable.")]
     public bool ignoreClutter = true;
 
-    [Header("Appearance")]
-    [Tooltip("Smooth movement between polls.")]
+    [Header("Motion smoothing")]
     public bool smoothMovement = true;
-    public float smoothSpeed = 6f;
+    [Tooltip("How tightly markers track their predicted position.")]
+    public float correctionSpeed = 10f;
+    [Tooltip("How fast markers turn to match facing.")]
+    public float rotationSpeed = 8f;
 
     private WorldMapManager map;
 
     // uuid -> marker. Reused between polls so mobs don't flicker.
     private Dictionary<string, GameObject> markers = new Dictionary<string, GameObject>();
-    private Dictionary<string, Vector3> targets = new Dictionary<string, Vector3>();
+    private Dictionary<string, SmoothedMarker> motion = new Dictionary<string, SmoothedMarker>();
 
     // Cached materials per mob type.
     private Dictionary<string, Material> matCache = new Dictionary<string, Material>();
@@ -52,11 +54,8 @@ public class EntityLayer : MonoBehaviour
     {
         if (!smoothMovement) return;
         foreach (KeyValuePair<string, GameObject> kv in markers)
-        {
-            if (!targets.TryGetValue(kv.Key, out Vector3 t)) continue;
-            kv.Value.transform.localPosition = Vector3.Lerp(
-                kv.Value.transform.localPosition, t, Time.deltaTime * smoothSpeed);
-        }
+            if (motion.TryGetValue(kv.Key, out SmoothedMarker sm))
+                sm.Tick(kv.Value.transform);
     }
 
     IEnumerator PollLoop()
@@ -140,19 +139,20 @@ public class EntityLayer : MonoBehaviour
             Vector3 size = SizeFor(type);
 
             // Same coordinate conversion the chunks use, so mobs sit on the terrain.
-            targets[e.uuid] = map.WorldToMapLocal(new Vector3(wx, wy, wz))
-                            + Vector3.up * (size.y * 0.5f * map.blockSize);
+            Vector3 pos = map.WorldToMapLocal(new Vector3(wx, wy, wz))
+                        + Vector3.up * (size.y * 0.5f * map.blockSize);
 
-            if (!smoothMovement)
-                marker.transform.localPosition = targets[e.uuid];
-
+            Quaternion rot = marker.transform.localRotation;
             Match r = rotRegex.Match(e.data);
             if (r.Success)
             {
                 float yaw = float.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture);
-                // Same MC->Unity yaw correction as players.
-                marker.transform.localRotation = Quaternion.Euler(0f, -yaw, 0f);
+                rot = Quaternion.Euler(0f, -yaw, 0f);   // same MC->Unity correction
             }
+
+            SmoothedMarker sm = motion[e.uuid];
+            if (smoothMovement) sm.PushUpdate(pos, rot);
+            else                sm.SnapTo(marker.transform, pos, rot);
         }
 
         // Despawn markers for mobs that are gone (killed, wandered off, despawned).
@@ -164,7 +164,7 @@ public class EntityLayer : MonoBehaviour
         {
             Destroy(markers[uuid]);
             markers.Remove(uuid);
-            targets.Remove(uuid);
+            motion.Remove(uuid);
         }
     }
 
@@ -203,6 +203,12 @@ public class EntityLayer : MonoBehaviour
         marker.GetComponent<Renderer>().material = MaterialFor(type);
 
         markers[uuid] = marker;
+
+        SmoothedMarker sm = new SmoothedMarker();
+        sm.correctionSpeed = correctionSpeed;
+        sm.rotationSpeed = rotationSpeed;
+        motion[uuid] = sm;
+
         return marker;
     }
 

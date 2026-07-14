@@ -7,69 +7,54 @@ using System.Globalization;
 
 /// <summary>
 /// Renders live Minecraft PLAYERS as markers on the tabletop map.
+/// Uses SmoothedMarker (velocity extrapolation) so movement is fluid between
+/// polls rather than lagging or stepping.
 ///
-/// This is deliberately a SEPARATE system from the chunk/block rendering:
-///   - Blocks change rarely  -> chunks poll slowly, rebuild meshes (expensive)
-///   - Players move constantly -> this polls fast, just moves transforms (cheap)
-///
-/// Attach to the SAME GameObject as WorldMapManager (it reads the map's
-/// settings so the markers land in the right place at the right scale).
+/// Attach to the SAME GameObject as WorldMapManager.
 /// </summary>
 [RequireComponent(typeof(WorldMapManager))]
 public class PlayerLayer : MonoBehaviour
 {
-    [Header("Player markers")]
-    [Tooltip("Seconds between position polls. Low = smooth movement.")]
-    public float pollInterval = 0.25f;
+    [Header("Polling")]
+    [Tooltip("Seconds between position polls. Players are a tiny payload, so " +
+             "polling fast is cheap. 0.1 = very responsive.")]
+    public float pollInterval = 0.1f;
 
-    [Tooltip("Marker height in Minecraft blocks (a player is ~2 blocks tall).")]
+    [Header("Marker")]
     public float markerHeightBlocks = 2f;
-
-    [Tooltip("Marker width in Minecraft blocks.")]
     public float markerWidthBlocks = 0.8f;
+    public Color markerColor = new Color(1f, 0.85f, 0.1f);
 
-    public Color markerColor = new Color(1f, 0.85f, 0.1f); // gold
+    [Tooltip("Fine-tunes facing. Try 0, 90, 180 or -90.")]
+    public float yawOffset = 0f;
 
-    [Tooltip("Corrects the Minecraft->Unity yaw mismatch. -90 is usually right; " +
-             "adjust in 90 steps if the facing is off.")]
-    public float yawOffset = -90f;
-
-    [Tooltip("Smooth the marker's movement between polls instead of snapping.")]
+    [Header("Motion smoothing")]
     public bool smoothMovement = true;
-    public float smoothSpeed = 8f;
+    [Tooltip("How tightly the marker tracks the predicted position.")]
+    public float correctionSpeed = 12f;
+    [Tooltip("How fast the marker turns to match the player's facing.")]
+    public float rotationSpeed = 10f;
 
     private WorldMapManager map;
-
-    // One marker GameObject per player uuid.
-    private Dictionary<string, GameObject> markers = new Dictionary<string, GameObject>();
-    // Where each marker is heading (for smoothing).
-    private Dictionary<string, Vector3> targets = new Dictionary<string, Vector3>();
-
     private Material markerMat;
+
+    private Dictionary<string, GameObject> markers = new Dictionary<string, GameObject>();
+    private Dictionary<string, SmoothedMarker> motion = new Dictionary<string, SmoothedMarker>();
 
     void Start()
     {
         map = GetComponent<WorldMapManager>();
-
-        Shader urpLit = Shader.Find("Universal Render Pipeline/Lit");
-        markerMat = new Material(urpLit);
+        markerMat = new Material(Shader.Find("Universal Render Pipeline/Lit"));
         markerMat.color = markerColor;
-
         StartCoroutine(PollLoop());
     }
 
     void Update()
     {
         if (!smoothMovement) return;
-
-        // Glide each marker toward its latest known position, so movement looks
-        // continuous instead of teleporting once per poll.
         foreach (KeyValuePair<string, GameObject> kv in markers)
-        {
-            if (!targets.TryGetValue(kv.Key, out Vector3 target)) continue;
-            kv.Value.transform.localPosition = Vector3.Lerp(
-                kv.Value.transform.localPosition, target, Time.deltaTime * smoothSpeed);
-        }
+            if (motion.TryGetValue(kv.Key, out SmoothedMarker sm))
+                sm.Tick(kv.Value.transform);
     }
 
     IEnumerator PollLoop()
@@ -83,7 +68,6 @@ public class PlayerLayer : MonoBehaviour
 
     IEnumerator FetchPlayers()
     {
-        // includeData=true is REQUIRED — without it we get name/uuid but no Pos.
         string url = "http://" + map.serverIP + ":" + map.serverPort
                    + "/players?includeData=true";
 
@@ -92,26 +76,17 @@ public class PlayerLayer : MonoBehaviour
             req.SetRequestHeader("Accept", "application/json");
             req.timeout = 10;
             yield return req.SendWebRequest();
-
-            if (req.result != UnityWebRequest.Result.Success)
-                yield break;   // silently retry next tick
-
+            if (req.result != UnityWebRequest.Result.Success) yield break;
             ParseAndPlace(req.downloadHandler.text);
         }
     }
 
     [System.Serializable] private struct PlayerEntry
-    {
-        public string name;
-        public string uuid;
-        public string data;   // SNBT blob containing Pos and Rotation
-    }
+    { public string name; public string uuid; public string data; }
     [System.Serializable] private struct PlayerList { public PlayerEntry[] items; }
 
-    // Pull "Pos:[1.23d,45.6d,7.89d]" out of the SNBT data string.
     private static readonly Regex posRegex = new Regex(
         @"Pos:\[\s*(-?[\d.]+)d?\s*,\s*(-?[\d.]+)d?\s*,\s*(-?[\d.]+)d?\s*\]");
-    // Pull "Rotation:[yaw,pitch]" out.
     private static readonly Regex rotRegex = new Regex(
         @"Rotation:\[\s*(-?[\d.]+)f?\s*,\s*(-?[\d.]+)f?\s*\]");
 
@@ -134,59 +109,49 @@ public class PlayerLayer : MonoBehaviour
             float wz = float.Parse(m.Groups[3].Value, CultureInfo.InvariantCulture);
 
             seen.Add(p.uuid);
-
             GameObject marker = GetOrCreateMarker(p.uuid, p.name);
 
-            // Convert Minecraft world coords -> local position on the map,
-            // using the SAME transform the chunks use so it lines up exactly.
-            targets[p.uuid] = map.WorldToMapLocal(new Vector3(wx, wy, wz))
-                            + Vector3.up * (markerHeightBlocks * 0.5f * map.blockSize);
+            Vector3 pos = map.WorldToMapLocal(new Vector3(wx, wy, wz))
+                        + Vector3.up * (markerHeightBlocks * 0.5f * map.blockSize);
 
-            if (!smoothMovement)
-                marker.transform.localPosition = targets[p.uuid];
-
-            // Face the direction the player is looking (yaw only).
+            Quaternion rot = marker.transform.localRotation;
             Match r = rotRegex.Match(p.data);
             if (r.Success)
             {
                 float yaw = float.Parse(r.Groups[1].Value, CultureInfo.InvariantCulture);
-                // Minecraft yaw increases CLOCKWISE; Unity's Y-rotation increases
-                // COUNTER-clockwise. So we negate it, then apply an offset to line
-                // up the zero point. Tune yawOffset in the Inspector if needed.
-                marker.transform.localRotation = Quaternion.Euler(0f, -yaw + yawOffset, 0f);
+                rot = Quaternion.Euler(0f, -yaw + yawOffset, 0f);
             }
+
+            SmoothedMarker sm = motion[p.uuid];
+            if (smoothMovement) sm.PushUpdate(pos, rot);
+            else                sm.SnapTo(marker.transform, pos, rot);
         }
 
-        // Remove markers for players who logged off / left.
         List<string> gone = new List<string>();
         foreach (string uuid in markers.Keys)
             if (!seen.Contains(uuid)) gone.Add(uuid);
-
         foreach (string uuid in gone)
         {
             Destroy(markers[uuid]);
             markers.Remove(uuid);
-            targets.Remove(uuid);
+            motion.Remove(uuid);
         }
     }
 
     GameObject GetOrCreateMarker(string uuid, string name)
     {
-        if (markers.TryGetValue(uuid, out GameObject existing))
-            return existing;
+        if (markers.TryGetValue(uuid, out GameObject existing)) return existing;
 
-        // Body: a simple upright box, scaled to a player's rough size.
         GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
         marker.name = "Player: " + name;
-        Destroy(marker.GetComponent<Collider>());   // no physics needed
+        Destroy(marker.GetComponent<Collider>());
         marker.transform.SetParent(transform, false);
         marker.transform.localScale = new Vector3(
-            markerWidthBlocks  * map.blockSize,
+            markerWidthBlocks * map.blockSize,
             markerHeightBlocks * map.blockSize,
-            markerWidthBlocks  * map.blockSize);
+            markerWidthBlocks * map.blockSize);
         marker.GetComponent<Renderer>().material = markerMat;
 
-        // A small "nose" so you can see which way they're facing.
         GameObject nose = GameObject.CreatePrimitive(PrimitiveType.Cube);
         Destroy(nose.GetComponent<Collider>());
         nose.transform.SetParent(marker.transform, false);
@@ -195,7 +160,12 @@ public class PlayerLayer : MonoBehaviour
         nose.GetComponent<Renderer>().material = markerMat;
 
         markers[uuid] = marker;
-        Debug.Log("PlayerLayer: tracking player '" + name + "'");
+        SmoothedMarker sm = new SmoothedMarker();
+        sm.correctionSpeed = correctionSpeed;
+        sm.rotationSpeed = rotationSpeed;
+        motion[uuid] = sm;
+
+        Debug.Log("PlayerLayer: tracking '" + name + "'");
         return marker;
     }
 }
