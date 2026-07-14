@@ -139,6 +139,18 @@ public class WorldMapManager : MonoBehaviour
         gridOriginCached = gridOrigin;
         centringOffsetCached = centringOffset;
 
+        // The bounds of the whole rendered map, in Minecraft coords. Chunks use
+        // this to distinguish an internal seam (cull) from the outer edge of the
+        // map (always draw, so the diorama has walls rather than being sliced open).
+        Vector3Int mapMin = new Vector3Int(
+            gridOrigin.x - renderRadius * chunkSize,
+            gridOrigin.y,
+            gridOrigin.z - renderRadius * chunkSize);
+        Vector3Int mapMax = new Vector3Int(
+            gridOrigin.x + (renderRadius + 1) * chunkSize,
+            gridOrigin.y + verticalChunks * chunkSize,
+            gridOrigin.z + (renderRadius + 1) * chunkSize);
+
         for (int cx = -renderRadius; cx <= renderRadius; cx++)
         for (int cz = -renderRadius; cz <= renderRadius; cz++)
         for (int cy = 0; cy < verticalChunks; cy++)
@@ -163,6 +175,8 @@ public class WorldMapManager : MonoBehaviour
             chunk.pollInterval = pollInterval;
             chunk.livePolling  = livePolling;
             chunk.materials    = materials;
+            chunk.mapMin       = mapMin;
+            chunk.mapMax       = mapMax;
 
             // Stagger start times across the poll interval so all chunks don't
             // hammer the server simultaneously.
