@@ -48,7 +48,11 @@ public class WorldMapManager : MonoBehaviour
     [Tooltip("Anchor the map to the detected table. Off = anchor to this object.")]
     public bool anchorToTable = true;
 
-    private MaterialLibrary materials;
+    [Header("Rendering")]
+    [Tooltip("Drag your VoxelVertexColor ShaderGraph material here. All chunks " +
+             "share it and render in one draw call each via baked vertex colours.")]
+    public Material vertexColorMaterial;
+
 
     // Cached so other layers (players, entities) can convert coordinates the
     // exact same way the chunks do — guaranteeing they line up on the map.
@@ -88,7 +92,14 @@ public class WorldMapManager : MonoBehaviour
 
     void Start()
     {
-        materials = new MaterialLibrary();
+        if (vertexColorMaterial == null)
+            Debug.LogError("WorldMapManager: assign the VoxelVertexColor material " +
+                           "in the Inspector, or chunks will render invisible/pink.");
+
+        // Ensure a load throttle exists so chunks don't stampede the server on
+        // startup (which caused blank spots that filled in only slowly).
+        if (LoadThrottle.Instance == null)
+            gameObject.AddComponent<LoadThrottle>();
 
         if (anchorToTable && MRUK.Instance != null)
             MRUK.Instance.RegisterSceneLoadedCallback(OnSceneReady);
@@ -174,7 +185,7 @@ public class WorldMapManager : MonoBehaviour
             chunk.worldOrigin  = gridOrigin;
             chunk.pollInterval = pollInterval;
             chunk.livePolling  = livePolling;
-            chunk.materials    = materials;
+            chunk.vertexColorMaterial = vertexColorMaterial;
             chunk.mapMin       = mapMin;
             chunk.mapMax       = mapMax;
 
